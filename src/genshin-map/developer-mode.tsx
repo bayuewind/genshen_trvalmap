@@ -1,8 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useSnapshot } from "valtio";
-import { MarkerLayer, CustomLayer } from "@canvaskit-map/react";
-import { Layer } from "@canvaskit-map/core";
-import { Canvas, Paint, Path } from "canvaskit-wasm";
+import { MarkerLayer } from "@canvaskit-map/react";
 import { state, toggleDeveloperMode, toggleDrawing, completePath, clearAllPaths, MapPoint, setSelectedPathIndex, toggleAnimation, setAnimationSpeed } from "./state";
 import { zIndex } from "./index";
 
@@ -12,106 +10,6 @@ interface PathPoint {
   pathIndex: number;
   pointIndex: number;
   type: 'start' | 'end' | 'middle';
-}
-
-// 路径线条绘制层
-class PathLineLayer extends Layer {
-  private _paint?: Paint;
-  private _selectedPaint?: Paint;
-  private paths: MapPoint[][];
-  private selectedPathIndex: number;
-
-  constructor(paths: MapPoint[][], selectedPathIndex: number = -1) {
-    super({ zIndex: zIndex.developerPath - 1 }); // 线条在点位下方
-    this.paths = paths;
-    this.selectedPathIndex = selectedPathIndex;
-  }
-
-  async init() {
-    // 普通路径画笔
-    this._paint = new this.canvaskit!.Paint();
-    this._paint.setStyle(this.canvaskit!.PaintStyle.Stroke);
-    this._paint.setStrokeWidth(3);
-    this._paint.setStrokeCap(this.canvaskit!.StrokeCap.Round);
-    this._paint.setStrokeJoin(this.canvaskit!.StrokeJoin.Round);
-    this._paint.setAntiAlias(true);
-
-    // 选中路径画笔
-    this._selectedPaint = new this.canvaskit!.Paint();
-    this._selectedPaint.setStyle(this.canvaskit!.PaintStyle.Stroke);
-    this._selectedPaint.setStrokeWidth(5);
-    this._selectedPaint.setStrokeCap(this.canvaskit!.StrokeCap.Round);
-    this._selectedPaint.setStrokeJoin(this.canvaskit!.StrokeJoin.Round);
-    this._selectedPaint.setAntiAlias(true);
-    this._selectedPaint.setColor(this.canvaskit!.Color(255, 107, 107, 1)); // #ff6b6b
-  }
-
-  draw(canvas: Canvas) {
-    if (!this._paint || !this._selectedPaint) return;
-
-    this.paths.forEach((path, pathIndex) => {
-      if (path.length < 2) return;
-
-      const isSelected = pathIndex === this.selectedPathIndex;
-      const paint = isSelected ? this._selectedPaint! : this._paint!;
-      
-      if (!isSelected) {
-        // 为不同路径设置不同颜色
-        const hue = (pathIndex * 60) % 360;
-        const color = this.hslToRgb(hue / 360, 0.7, 0.5);
-        paint.setColor(this.canvaskit!.Color(color.r, color.g, color.b, 1));
-      }
-
-      // 创建路径
-      const skPath = new this.canvaskit!.Path();
-      skPath.moveTo(path[0].x, path[0].y);
-      
-      for (let i = 1; i < path.length; i++) {
-        skPath.lineTo(path[i].x, path[i].y);
-      }
-
-      // 绘制路径
-      canvas.drawPath(skPath, paint);
-      
-      // 如果是选中路径，添加虚线效果
-      if (isSelected) {
-        paint.setPathEffect(
-          this.canvaskit!.PathEffect.MakeDash([10, 5], 0)
-        );
-        canvas.drawPath(skPath, paint);
-        paint.setPathEffect(null);
-      }
-
-      skPath.delete();
-    });
-  }
-
-  // HSL to RGB 转换
-  private hslToRgb(h: number, s: number, l: number) {
-    let r, g, b;
-    if (s === 0) {
-      r = g = b = l;
-    } else {
-      const hue2rgb = (p: number, q: number, t: number) => {
-        if (t < 0) t += 1;
-        if (t > 1) t -= 1;
-        if (t < 1/6) return p + (q - p) * 6 * t;
-        if (t < 1/2) return q;
-        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-        return p;
-      };
-      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-      const p = 2 * l - q;
-      r = hue2rgb(p, q, h + 1/3);
-      g = hue2rgb(p, q, h);
-      b = hue2rgb(p, q, h - 1/3);
-    }
-    return {
-      r: Math.round(r * 255),
-      g: Math.round(g * 255),
-      b: Math.round(b * 255)
-    };
-  }
 }
 
 // 获取所有路径点的公共函数
@@ -152,7 +50,7 @@ function getAllPathPoints(developerMode: any) {
         pathIndex: currentPathIndex,
         pointIndex,
         type: pointIndex === 0 ? 'start' as const : 
-              pointIndex === developerMode.currentPath.length - 1 ? 'end' as const : 'middle' as const
+              pointIndex === developerMode.currentPath.length - 1 && developerMode.currentPath.length > 1 ? 'end' as const : 'middle' as const
       };
       
       if (pathPoint.type === 'start') {
@@ -177,6 +75,326 @@ function getAllPaths(developerMode: any): MapPoint[][] {
   return paths;
 }
 
+// 优化的SVG路径线条组件 - 基于高德地图绘制原理
+function OptimizedPathLines({ paths, selectedPathIndex }: { paths: MapPoint[][], selectedPathIndex: number }) {
+  if (paths.length === 0) return null;
+
+  console.log('🎨 OptimizedPathLines 渲染:', {
+    路径数量: paths.length,
+    选中路径: selectedPathIndex,
+    详细路径: paths.map((path, i) => ({
+      路径索引: i,
+      点数: path.length,
+      起点: path[0],
+      终点: path[path.length - 1]
+    }))
+  });
+
+  return (
+    <>
+      {paths.map((path, pathIndex) => {
+        if (path.length < 2) return null;
+        
+        const isSelected = pathIndex === selectedPathIndex;
+        const color = isSelected ? '#ff0000' : `hsl(${(pathIndex * 80) % 360}, 100%, 50%)`;
+        const strokeWidth = isSelected ? 8 : 4;
+        
+        // 计算路径的边界框
+        const xs = path.map(p => p.x);
+        const ys = path.map(p => p.y);
+        const minX = Math.min(...xs) - 20;
+        const minY = Math.min(...ys) - 20;
+        const maxX = Math.max(...xs) + 20;
+        const maxY = Math.max(...ys) + 20;
+        const width = maxX - minX;
+        const height = maxY - minY;
+        
+        // 创建路径字符串
+        const pathData = path.map((point, index) => {
+          const x = point.x - minX;
+          const y = point.y - minY;
+          return index === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
+        }).join(' ');
+        
+        console.log(`🔗 绘制优化路径 ${pathIndex + 1}:`, {
+          选中状态: isSelected,
+          线条颜色: color,
+          线条宽度: strokeWidth,
+          路径点数: path.length,
+          边界框: { minX, minY, width, height },
+          路径数据: pathData
+        });
+        
+        return (
+          <MarkerLayer
+            key={`optimized-path-${pathIndex}`}
+            items={[{ x: minX, y: minY }]}
+            zIndex={zIndex.developerPath - 1}
+          >
+            <svg
+              width={width}
+              height={height}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                pointerEvents: 'none',
+                overflow: 'visible',
+                zIndex: 1000
+              }}
+            >
+              {/* 发光效果（选中路径） */}
+              {isSelected && (
+                <path
+                  d={pathData}
+                  stroke={color}
+                  strokeWidth={strokeWidth + 8}
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={0.3}
+                />
+              )}
+              {/* 主路径线 */}
+              <path
+                d={pathData}
+                stroke={color}
+                strokeWidth={strokeWidth}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.9}
+                strokeDasharray={isSelected ? "12,6" : "none"}
+              />
+            </svg>
+          </MarkerLayer>
+        );
+      })}
+    </>
+  );
+}
+
+// SVG路径线条组件 - 每个线段单独渲染以确保可见性
+function SVGPathLines({ paths, selectedPathIndex }: { paths: MapPoint[][], selectedPathIndex: number }) {
+  if (paths.length === 0) return null;
+
+  console.log('🎨 SVGPathLines 渲染:', {
+    路径数量: paths.length,
+    选中路径: selectedPathIndex,
+    详细路径: paths.map((path, i) => ({
+      路径索引: i,
+      点数: path.length,
+      点位: path
+    }))
+  });
+
+  return (
+    <>
+      {paths.map((path, pathIndex) => {
+        if (path.length < 2) return null;
+        
+        const isSelected = pathIndex === selectedPathIndex;
+        const color = isSelected ? '#ff0000' : `hsl(${(pathIndex * 80) % 360}, 100%, 50%)`;
+        const strokeWidth = isSelected ? 8 : 4;
+        
+        console.log(`🔗 绘制SVG路径 ${pathIndex + 1}:`, {
+          选中状态: isSelected,
+          线条颜色: color,
+          线条宽度: strokeWidth,
+          路径点数: path.length,
+          路径点: path
+        });
+
+        // 为每对相邻点创建SVG线段
+        const lineSegments = [];
+        for (let i = 0; i < path.length - 1; i++) {
+          const start = path[i];
+          const end = path[i + 1];
+          
+          // 计算边界框以确保SVG足够大
+          const minX = Math.min(start.x, end.x) - 10;
+          const minY = Math.min(start.y, end.y) - 10;
+          const maxX = Math.max(start.x, end.x) + 10;
+          const maxY = Math.max(start.y, end.y) + 10;
+          const width = maxX - minX;
+          const height = maxY - minY;
+          
+          console.log(`  📏 线段 ${i + 1}:`, {
+            起点: start,
+            终点: end,
+            SVG尺寸: { width, height, minX, minY }
+          });
+          
+          lineSegments.push(
+            <MarkerLayer
+              key={`svg-line-${pathIndex}-${i}`}
+              items={[{ x: minX, y: minY }]}
+              zIndex={zIndex.developerPath - 1}
+            >
+              <svg
+                width={width}
+                height={height}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  pointerEvents: 'none',
+                  overflow: 'visible',
+                  zIndex: 1000
+                }}
+              >
+                {/* 发光效果背景 */}
+                {isSelected && (
+                  <line
+                    x1={start.x - minX}
+                    y1={start.y - minY}
+                    x2={end.x - minX}
+                    y2={end.y - minY}
+                    stroke={color}
+                    strokeWidth={strokeWidth + 4}
+                    strokeLinecap="round"
+                    opacity={0.3}
+                  />
+                )}
+                {/* 主线条 */}
+                <line
+                  x1={start.x - minX}
+                  y1={start.y - minY}
+                  x2={end.x - minX}
+                  y2={end.y - minY}
+                  stroke={color}
+                  strokeWidth={strokeWidth}
+                  strokeLinecap="round"
+                  opacity={0.9}
+                  strokeDasharray={isSelected ? "8,4" : "none"}
+                />
+              </svg>
+            </MarkerLayer>
+          );
+        }
+        
+        return <div key={`path-${pathIndex}`}>{lineSegments}</div>;
+      })}
+    </>
+  );
+}
+
+// 测试线条组件 - 用固定位置验证MarkerLayer是否工作
+function TestLines({ paths }: { paths: MapPoint[][] }) {
+  if (paths.length === 0) return null;
+  
+  const firstPath = paths[0];
+  if (firstPath.length < 1) return null;
+  
+  console.log('🧪 TestLines 测试组件:', {
+    测试位置: firstPath[0],
+    测试说明: '在第一个路径点显示明显的测试标记'
+  });
+  
+  return (
+    <MarkerLayer
+      items={[{ x: firstPath[0].x, y: firstPath[0].y }]}
+      zIndex={zIndex.developerPath + 10}
+    >
+      <div
+        style={{
+          width: '20px',
+          height: '20px',
+          backgroundColor: '#00ff00',
+          border: '3px solid #000000',
+          borderRadius: '50%',
+          position: 'absolute',
+          transform: 'translate(-50%, -50%)',
+          boxShadow: '0 0 20px #00ff00',
+          zIndex: 999
+        }}
+      />
+    </MarkerLayer>
+  );
+}
+
+// 简单的SVG路径线组件
+function PathLines({ paths, selectedPathIndex }: { paths: MapPoint[][], selectedPathIndex: number }) {
+  if (paths.length === 0) return null;
+
+  console.log('🎨 PathLines 渲染:', {
+    路径数量: paths.length,
+    选中路径: selectedPathIndex,
+    路径详情: paths.map((path, i) => ({ 索引: i, 点数: path.length, 首点: path[0] }))
+  });
+
+  return (
+    <>
+      {/* 优化的SVG路径线条 */}
+      <OptimizedPathLines paths={paths} selectedPathIndex={selectedPathIndex} />
+    </>
+  );
+
+  // SVG方法备用（注释掉）
+  /*
+  return (
+    <>
+      {paths.map((path, pathIndex) => {
+        if (path.length < 2) return null;
+        
+        const isSelected = pathIndex === selectedPathIndex;
+        const strokeColor = isSelected ? '#ff6b6b' : `hsl(${(pathIndex * 60) % 360}, 70%, 50%)`;
+        const strokeWidth = isSelected ? 4 : 3;
+        
+        console.log(`绘制路径 ${pathIndex + 1}:`, {
+          点数: path.length,
+          颜色: strokeColor,
+          线宽: strokeWidth,
+          是否选中: isSelected,
+          路径点: path
+        });
+        
+        // 直接使用每个点作为独立的线段
+        const pathSegments = [];
+        for (let i = 0; i < path.length - 1; i++) {
+          const start = path[i];
+          const end = path[i + 1];
+          
+          pathSegments.push(
+            <MarkerLayer
+              key={`path-${pathIndex}-segment-${i}`}
+              items={[{ x: start.x, y: start.y }]}
+              zIndex={zIndex.developerPath - 1}
+            >
+              <svg
+                width="100"
+                height="100"
+                style={{
+                  position: 'absolute',
+                  top: '-50px',
+                  left: '-50px',
+                  pointerEvents: 'none',
+                  overflow: 'visible'
+                }}
+              >
+                <line
+                  x1="50"
+                  y1="50"
+                  x2={end.x - start.x + 50}
+                  y2={end.y - start.y + 50}
+                  stroke={strokeColor}
+                  strokeWidth={strokeWidth}
+                  strokeLinecap="round"
+                  strokeDasharray={isSelected ? "8,4" : "none"}
+                  opacity={0.8}
+                />
+              </svg>
+            </MarkerLayer>
+          );
+        }
+        
+        return <div key={`path-${pathIndex}`}>{pathSegments}</div>;
+      })}
+    </>
+  );
+  */
+}
+
 // 路径标记组件 - 在CanvaskitMap内部使用
 export function DeveloperPathMarkers() {
   const { developerMode } = useSnapshot(state);
@@ -188,15 +406,20 @@ export function DeveloperPathMarkers() {
 
   const { startPoints, endPoints, middlePoints } = getAllPathPoints(developerMode);
   const allPaths = getAllPaths(developerMode);
-  const { selectedPathIndex, isAnimating } = developerMode;
+  const { selectedPathIndex, isAnimating, animationSpeed } = developerMode;
 
   console.log('🎨 DeveloperPathMarkers 渲染:', {
     isActive: developerMode.isActive,
+    isDrawing: developerMode.isDrawing,
+    currentPathLength: developerMode.currentPath.length,
+    completedPaths: developerMode.completedPaths.length,
     startPoints: startPoints.length,
     endPoints: endPoints.length,
     middlePoints: middlePoints.length,
     总计: startPoints.length + endPoints.length + middlePoints.length,
-    路径数量: allPaths.length
+    路径数量: allPaths.length,
+    选中路径: selectedPathIndex,
+    动画状态: isAnimating
   });
 
   // 动画逻辑
@@ -210,7 +433,7 @@ export function DeveloperPathMarkers() {
 
     let currentIndex = 0;
     let progress = 0;
-    const speed = 0.02; // 动画速度
+    const speed = 0.02 * (animationSpeed / 3); // 根据速度调整
 
     const animate = () => {
       if (currentIndex >= path.length - 1) {
@@ -240,17 +463,12 @@ export function DeveloperPathMarkers() {
 
     const animationId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationId);
-  }, [isAnimating, selectedPathIndex, allPaths]);
+  }, [isAnimating, selectedPathIndex, allPaths, animationSpeed]);
 
   return (
     <>
-      {/* 路径线条层 */}
-      {allPaths.length > 0 && (
-        <CustomLayer
-          key={`paths-${allPaths.length}-${selectedPathIndex}`}
-          createLayer={() => new PathLineLayer(allPaths, selectedPathIndex)}
-        />
-      )}
+      {/* 路径线条 */}
+      <PathLines paths={allPaths} selectedPathIndex={selectedPathIndex} />
 
       {/* 起点标记 - 绿色 */}
       {startPoints.length > 0 && (
@@ -283,7 +501,7 @@ export function DeveloperPathMarkers() {
       )}
 
       {/* 动画标记 */}
-      {isAnimating && selectedPathIndex >= 0 && (
+      {isAnimating && selectedPathIndex >= 0 && allPaths[selectedPathIndex] && (
         <MarkerLayer
           items={[{ x: animationPosition.x, y: animationPosition.y }]}
           zIndex={zIndex.developerPath + 1}
@@ -411,18 +629,18 @@ export function DeveloperMode() {
                 ))}
               </select>
 
-                             <div className="flex gap-2">
-                 <button
-                   onClick={handleToggleAnimation}
-                   className={`flex-1 px-3 py-2 rounded text-sm ${
-                     isAnimating
-                       ? 'bg-red-500 text-white hover:bg-red-600'
-                       : 'bg-green-500 text-white hover:bg-green-600'
-                   }`}
-                 >
-                   {isAnimating ? '⏸️ 停止动画' : '▶️ 播放动画'}
-                 </button>
-               </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleToggleAnimation}
+                  className={`flex-1 px-3 py-2 rounded text-sm ${
+                    isAnimating
+                      ? 'bg-red-500 text-white hover:bg-red-600'
+                      : 'bg-green-500 text-white hover:bg-green-600'
+                  }`}
+                >
+                  {isAnimating ? '⏸️ 停止动画' : '▶️ 播放动画'}
+                </button>
+              </div>
 
               <div className="mt-2">
                 <label className="block text-sm text-gray-600 mb-1">动画速度</label>
@@ -463,7 +681,7 @@ export function DeveloperMode() {
           {developerMode.isDrawing && (
             <div className="text-sm text-blue-600 bg-blue-100 p-2 rounded">
               💡 点击地图上的任意位置添加路径点
-              <br />📍 使用与传送点相同的坐标系统
+              <br />📍 当前绘制路径 {developerMode.completedPaths.length + 1}
               <br />🔍 检查控制台查看调试信息
             </div>
           )}
@@ -480,11 +698,12 @@ export function DeveloperMode() {
           <div className="text-xs text-gray-400 bg-yellow-50 p-2 rounded">
             <div className="font-semibold">🐛 调试信息:</div>
             <div>MarkerLayer位置: CanvaskitMap内部 ✓</div>
-            <div>路径线条: CustomLayer ✓</div>
+            <div>路径线条: SVG绘制 ✓</div>
             <div>起点数量: {startPoints.length}</div>
             <div>终点数量: {endPoints.length}</div>
             <div>中间点数量: {middlePoints.length}</div>
             <div>路径数量: {allPaths.length}</div>
+            <div>当前选中路径: {selectedPathIndex + 1}</div>
             {isAnimating && (
               <div>动画状态: 运行中 ✓ 路径{selectedPathIndex + 1}</div>
             )}
