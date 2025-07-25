@@ -19,23 +19,20 @@ export const store = proxy({
 
 async function init() {
   const [response, canvaskit] = await Promise.all([
-    fetch(
-      "https://ky-genshin-map-1253179036.cos.ap-nanjing.myqcloud.com/data-5.0.1.gz"
-    ),
+    fetch("/data.bin"),
     initCanvaskit({
       locateFile() {
-        return "https://libs.cdnjs.net/canvaskit-wasm/0.39.1/canvaskit.wasm";
+        return "/canvaskit.wasm";
       },
     }),
   ]);
-  decompress(new Uint8Array(await response.arrayBuffer()), (_, data) => {
-    store.canvaskit = ref(canvaskit);
-    store.mapData = ref(MapData.deserializeBinary(data));
-    activateArea(store.mapData.getAreaList()[0]);
-    store.mapInfo = ref(
-      store.mapData.getMapInfoMap().get(store.activeTopArea.getMapId())!
-    );
-  });
+  const data = new Uint8Array(await response.arrayBuffer());
+  store.canvaskit = ref(canvaskit);
+  store.mapData = ref(MapData.deserializeBinary(data));
+  activateArea(store.mapData.getAreaList()[0]);
+  store.mapInfo = ref(
+    store.mapData.getMapInfoMap().get(store.activeTopArea.getMapId())!
+  );
 }
 
 init();
