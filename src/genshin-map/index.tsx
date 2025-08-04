@@ -17,7 +17,7 @@ export const zIndex = {
   underground: 10,
   marker: 20,
   activeMarker: 30,
-  developerPath: 35, // 新增开发者路径层级
+  developerPath: 100, // 提高开发者路径层级到最高
 };
 
 export function GenshinMap() {

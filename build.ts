@@ -29,7 +29,7 @@ async function main() {
   if (dev) {
     spawn("pnpm", ["run", "uno", "-w"], { stdio: "inherit" });
     const buildContext = await context(options);
-    console.log(await buildContext.serve({ servedir: "dist" }));
+    console.log(await buildContext.serve({ servedir: "dist", port: 8181 }));
   } else {
     spawn("pnpm", ["run", "uno"], { stdio: "inherit" });
     await build(options);
